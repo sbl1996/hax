@@ -9,12 +9,12 @@ rng, dropout_rng = random.split(rng, 2)
 
 x = random.normal(rng, (1, 32, 32, 3))
 
-variables = model.init({"params": rng, "dropout": dropout_rng}, x, True)
-y, new_vars = model.apply(variables, x, True, rngs={"params": rng, "dropout": dropout_rng}, mutable="batch_stats")
+variables = model.init({"params": rng, "dropout": dropout_rng}, x)
+y, new_vars = model.apply(variables, x, True, mutable="batch_stats")
 t1 = new_vars['batch_stats']['PreActDownBlock_0']['BatchNorm_0']['var'].mean()
-y, new_vars = model.apply(new_vars, x, False, rngs={"params": rng, "dropout": dropout_rng}, mutable="batch_stats")
+y, new_vars = model.apply(new_vars, x, False, mutable="batch_stats")
 t2 = new_vars['batch_stats']['PreActDownBlock_0']['BatchNorm_0']['var'].mean()
-y, new_vars = model.apply(new_vars, x, True, rngs={"params": rng, "dropout": dropout_rng}, mutable="batch_stats")
+y, new_vars = model.apply(new_vars, x, True, mutable="batch_stats")
 t3 = new_vars['batch_stats']['PreActDownBlock_0']['BatchNorm_0']['var'].mean()
 
 

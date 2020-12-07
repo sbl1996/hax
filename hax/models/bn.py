@@ -30,7 +30,7 @@ class BatchNorm(Module):
     axis_index_groups: Any = None
 
     @compact
-    def __call__(self, x, training: bool = False):
+    def __call__(self, x, training: bool = True):
         x = jnp.asarray(x, jnp.float32)
         axis = self.axis if isinstance(self.axis, tuple) else (self.axis,)
         axis = _absolute_dims(x.ndim, axis)

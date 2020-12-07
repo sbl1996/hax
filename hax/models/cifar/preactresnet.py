@@ -52,7 +52,7 @@ class ResNet(nn.Module):
     stem_channels: int = 16
 
     @nn.compact
-    def __call__(self, x, training: bool = False):
+    def __call__(self, x, training: bool = True):
         num_blocks = (self.depth - 4) // 6
         strides = [1, 2, 2]
         channels = [16, 32, 64]
