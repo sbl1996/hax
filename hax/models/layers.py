@@ -58,7 +58,7 @@ def Norm(channels, dtype=jnp.float32):
     return BatchNorm(momentum=0.9, epsilon=1e-5, dtype=dtype)
 
 
-def Act(act):
+def Act():
     return ReLU()
 
 
