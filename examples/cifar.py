@@ -237,3 +237,7 @@ for epoch in range(epochs):
 
     metrics = eval_epoch(p_eval_step, state, test_it, test_steps)
     log_metrics('valid', metrics)
+
+
+import jax.tools.colab_tpu
+jax.tools.colab_tpu.setup_tpu()

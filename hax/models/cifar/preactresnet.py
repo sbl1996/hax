@@ -31,7 +31,7 @@ class BasicBlock(nn.Module):
         if self.dropout:
             x = Dropout(self.dropout)(x, training)
 
-        x = Conv2d(out_channels, out_channels, 3)(x)
+        x = Conv2d(out_channels, out_channels, 3, dtype=self.dtype)(x)
         return shortcut + x
 
 
