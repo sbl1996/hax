@@ -1,66 +1,30 @@
 import time
-import inspect
 from functools import partial
 from toolz import curry
 from concurrent.futures import thread
 
-from typing import Any, Sequence, Type
+from typing import Any
 
-import numpy as np
 import tensorflow as tf
 
 import jax
 from jax import lax
 import jax.numpy as jnp
 
-from flax import linen as nn
 from flax import jax_utils
 from flax.training import train_state
 from flax.training import common_utils
-import optax
 
 from hhutil.io import time_now
 
 from hanser.transform import to_tensor, normalize, random_crop
 from hanser.datasets.cifar import make_cifar100_dataset
 
-from hax.optim.sgd import sgd
-from hax.optim.lr_schedule import cosine_lr
+from hax.optim import sgd, cosine_lr
+from hax.nn.loss import cross_entropy
+from hax.models.cifar.resnet import resnet110
 
 broadcast = jax_utils.replicate
-
-ModuleDef = Any
-DType = Any
-
-class Sequential(nn.Module):
-
-    layers: Sequence[Type[nn.Module]]
-
-    def __call__(self, x, training=False):
-        for layer in self.layers:
-            sig = inspect.signature(layer)
-            if 'training' in sig.parameters:
-                x = layer(x, training=training)
-            else:
-                x = layer(x)
-        return x
-
-
-class BatchNorm(nn.Module):
-
-    momentum: float = 0.9
-    epsilon: float = 1e-5
-    dtype: Any = jnp.float32
-
-    @nn.compact
-    def __call__(self, x, training=False):
-        norm = nn.BatchNorm(momentum=self.momentum, epsilon=self.epsilon, dtype=self.dtype)
-        return norm(x, use_running_average=not training)
-
-
-class ReLU(nn.Module):
-    def __call__(self, x):
-        return nn.relu(x)
 
 
 def log_metrics(stage, metrics):
@@ -88,93 +52,10 @@ def get_iter(dataset):
     return it
 
 
-class Bottleneck(nn.Module):
-    in_channels: int
-    channels: ModuleDef
-    stride: int
-    expansion: int = 4
-    dtype: DType = jnp.float32
-
-    @nn.compact
-    def __call__(self, x, training=False):
-        out_channels = self.channels * self.expansion
-
-        identity = x
-        x = Conv2d(self.in_channels, self.channels, 1,
-                   norm='def', act='def', dtype=self.dtype)(x, training=training)
-        x = Conv2d(self.channels, self.channels, 3, stride=self.stride,
-                   norm='def', act='def', dtype=self.dtype)(x, training=training)
-        x = Conv2d(self.channels, out_channels, 1,
-                   norm='def', dtype=self.dtype)(x, training=training)
-
-        if identity.shape != x.shape:
-            identity = Conv2d(self.in_channels, out_channels, 1, stride=self.stride,
-                              norm='def', dtype=self.dtype)(identity, training=training)
-        return ReLU()(identity + x)
-
-
-def Conv2d(in_channels, out_channel, kernel_size, stride=1, padding='SAME', bias=None,
-           norm=None, act=None, dtype=jnp.float32):
-    if bias is None:
-        bias = norm is None
-    if isinstance(kernel_size, int):
-        kernel_size = (kernel_size, kernel_size)
-    if isinstance(stride, int):
-        stride = (stride, stride)
-    conv = nn.Conv(out_channel, kernel_size, strides=stride, padding=padding, use_bias=bias, dtype=dtype)
-    layers = [conv]
-    if norm is not None:
-        layers.append(Norm(out_channel, dtype=dtype))
-    if act is not None:
-        layers.append(ReLU())
-    return Sequential(layers)
-
-
-def Norm(channels, dtype=jnp.float32):
-    return BatchNorm(momentum=0.9, epsilon=1e-5, dtype=dtype)
-
-
-def Linear(in_channels, out_channels, dtype=jnp.float32):
-    return nn.Dense(out_channels, use_bias=True, dtype=dtype)
-
-
-class ResNet(nn.Module):
-    depth: int
-    block: ModuleDef
-    num_classes: int = 10
-    channels: Sequence[int] = (16, 16, 32, 64)
-    dtype: DType = jnp.float32
-
-    @nn.compact
-    def __call__(self, x, training=False):
-        block = partial(self.block, dtype=self.dtype)
-        layers = [(self.depth - 2) // 9] * 3
-        stem_channels, *channels = self.channels
-        x = Conv2d(3, stem_channels, kernel_size=3,
-                   norm='def', act='def', dtype=self.dtype)(x, training=training)
-
-        c_in = stem_channels
-
-        strides = [1, 2, 2]
-        for i, (c, n, s) in enumerate(zip(channels, layers, strides)):
-            x = block(c_in, c, stride=s)(x, training=training)
-            c_in = c * self.block.expansion
-            for i in range(1, n):
-                x = block(c_in, c, stride=1)(x, training=training)
-
-        x = jnp.mean(x, axis=(1, 2))
-        x = Linear(c_in, self.num_classes, dtype=self.dtype)(x)
-        return x
-
-
-def cross_entropy_loss(logits, labels):
-    return optax.softmax_cross_entropy(logits=logits, labels=labels)
-
-
 def compute_metrics(logits, labels):
     return {
         'total': jnp.int32(logits.shape[0]),
-        'loss': cross_entropy_loss(logits, labels).sum(),
+        'loss': cross_entropy(logits, labels).sum(),
         'acc': jnp.sum(jnp.argmax(logits, -1) == jnp.argmax(labels, -1)),
     }
 
@@ -189,7 +70,7 @@ def train_step(state, batch, prev_metrics):
             {'params': params, 'batch_stats': state.batch_stats},
             images, training=True, mutable=['batch_stats'])
         logits = logits.astype(jnp.float32)
-        per_example_loss = cross_entropy_loss(logits, labels)
+        per_example_loss = cross_entropy(logits, labels)
         loss = jnp.mean(per_example_loss)
         return loss, (logits, new_model_state)
 
@@ -323,7 +204,7 @@ rng, init_rng = jax.random.split(rng)
 
 input_shape = (32, 32, 3)
 num_classes = 100
-model = ResNet(depth=110, block=Bottleneck, num_classes=num_classes, dtype=jnp.bfloat16)
+model = resnet110(num_classes=num_classes, dtype=jnp.bfloat16)
 variables = jax.jit(model.init, device=jax.devices(backend="cpu")[0])(init_rng, jnp.ones([1, *input_shape]))
 params, batch_stats = variables['params'], variables['batch_stats']
 
@@ -334,7 +215,7 @@ tx = sgd(lr_schedule, momentum=0.9, nesterov=True, weight_decay=5e-4)
 
 state = TrainState.create(
     apply_fn=model.apply, params=params, tx=tx, batch_stats=batch_stats)
-state = jax_utils.replicate(state)
+state = broadcast(state)
 
 
 train_function = make_train_function(
