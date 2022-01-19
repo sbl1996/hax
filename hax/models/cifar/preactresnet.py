@@ -11,7 +11,7 @@ class BasicBlock(nn.Module):
     channels: int
     stride: int
     dropout: float
-    expansion: int = 4
+    expansion: int = 1
     dtype: DType = jnp.float32
 
     @nn.compact
