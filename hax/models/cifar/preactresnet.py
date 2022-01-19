@@ -25,7 +25,7 @@ class BasicBlock(nn.Module):
         if self.in_channels != out_channels or self.stride == 2:
             shortcut = Conv2d(self.in_channels, out_channels, 1, stride=self.stride, dtype=self.dtype)(x)
 
-        x = Conv2d(self.in_channels, out_channels, 3,
+        x = Conv2d(self.in_channels, out_channels, 3, stride=self.stride,
                    norm='def', act='def', dtype=self.dtype)(x, training)
 
         if self.dropout:
