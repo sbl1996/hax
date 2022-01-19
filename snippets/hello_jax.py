@@ -24,7 +24,6 @@ def transform(image, label, training):
     return image, label
 
 
-
 batch_size = 128
 eval_batch_size = batch_size * 16
 ds_train, ds_test, steps_per_epoch, test_steps = make_cifar100_dataset(
