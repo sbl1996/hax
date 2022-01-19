@@ -40,11 +40,12 @@ class ResNet(nn.Module):
     block: ModuleDef
     num_classes: int = 10
     channels: Sequence[int] = (16, 16, 32, 64)
+    dropout: float = 0.3
     dtype: DType = jnp.float32
 
     @nn.compact
     def __call__(self, x, training=False):
-        block = partial(self.block, dtype=self.dtype)
+        block = partial(self.block, dropout=self.dropout, dtype=self.dtype)
         layers = [(self.depth - 4) // 6] * 3
         stem_channels, *channels = self.channels
         x = Conv2d(3, stem_channels, kernel_size=3, dtype=self.dtype)(x)
