@@ -3,7 +3,7 @@ from functools import partial
 
 import jax.numpy as jnp
 from flax import linen as nn
-from hax.models.layers import NormAct, Conv2d, Linear, DType, ModuleDef
+from hax.models.layers import NormAct, Conv2d, Linear, DType, ModuleDef, Dropout
 
 
 class BasicBlock(nn.Module):
@@ -29,7 +29,7 @@ class BasicBlock(nn.Module):
                    norm='def', act='def', dtype=self.dtype)(x, training)
 
         if self.dropout:
-            x = nn.Dropout(self.dropout)(x, training)
+            x = Dropout(self.dropout)(x, training)
 
         x = Conv2d(out_channels, out_channels, 3)(x)
         return shortcut + x

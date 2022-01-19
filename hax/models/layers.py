@@ -20,6 +20,15 @@ class Sequential(nn.Module):
         return x
 
 
+class Dropout(nn.Module):
+
+    rate: float
+
+    @nn.compact
+    def __call__(self, x, training=False):
+        return nn.Dropout(rate=self.rate)(x, deterministic=not training)
+
+
 class BatchNorm(nn.Module):
 
     momentum: float = 0.9

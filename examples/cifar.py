@@ -9,6 +9,7 @@ import tensorflow as tf
 
 import jax
 from jax import lax
+from jax import random
 import jax.numpy as jnp
 
 from flax import jax_utils
@@ -61,15 +62,17 @@ def compute_metrics(logits, labels):
     }
 
 
-def train_step(state, batch, prev_metrics):
+def train_step(state, batch, prev_metrics, dropout_rng=None):
 
     images, labels = batch
     images = images.astype(jnp.bfloat16)
 
+    dropout_rng, new_dropout_rng = random.split(dropout_rng)
+
     def loss_fn(params):
         logits, new_model_state = state.apply_fn(
-            {'params': params, 'batch_stats': state.batch_stats},
-            images, training=True, mutable=['batch_stats'])
+            {'params': params, 'batch_stats': state.batch_stats}, images,
+            training=True, mutable=['batch_stats'], rngs={'dropout': dropout_rng})
         logits = logits.astype(jnp.float32)
         per_example_loss = cross_entropy(logits, labels)
         loss = jnp.mean(per_example_loss)
@@ -84,7 +87,7 @@ def train_step(state, batch, prev_metrics):
     metrics = jax.tree_multimap(jnp.add, prev_metrics, metrics)
     new_state = state.apply_gradients(
         grads=grads, batch_stats=new_model_state['batch_stats'])
-    return new_state, metrics
+    return new_state, metrics, new_dropout_rng
 
 
 def allreduce_metrics(metrics):
@@ -101,31 +104,32 @@ def make_train_function(
         return step // steps_per_loop != 1
 
     def train_loop_body(args):
-        state, metrics, token, step = args
+        state, metrics, dropout_rng, token, step = args
         batch, token = lax.infeed(token, shape=(
             jax.ShapedArray((batch_size // n, *input_shape), jnp.float32),
             jax.ShapedArray((batch_size // n, num_classes), jnp.float32)))
-        state, metrics = train_step(state, batch, metrics)
+        state, metrics, dropout_rng = train_step(state, batch, metrics, dropout_rng)
         step += 1
-        return state, metrics, token, step
+        return state, metrics, dropout_rng, token, step
 
-    def train_loop(state, metrics, step):
+    def train_loop(state, metrics, dropout_rng, step):
         token = lax.create_token()
-        state, metrics, _token, step = lax.while_loop(
+        state, metrics, dropout_rng, _token, step = lax.while_loop(
             train_loop_cond,
             train_loop_body,
-            (state, metrics, token, step))
+            (state, metrics, dropout_rng, token, step))
         metrics = allreduce_metrics(metrics)
-        return state, metrics, step
+        return state, metrics, dropout_rng, step
 
     train_functon = jax.pmap(train_loop, axis_name='batch')
     return train_functon
 
 
-def train_epoch(train_function, state, train_it, steps_per_epoch):
+def train_epoch(train_function, state, train_it, steps_per_epoch, dropout_rng):
     host_step, device_step = 0, broadcast(0)
     empty_metrics = broadcast({'total': 0, 'loss': 0., 'acc': 0})
-    state, metrics, device_step = train_function(state, empty_metrics, device_step)
+    state, metrics, dropout_rng, device_step = train_function(
+        state, empty_metrics, dropout_rng, device_step)
 
     infeed_pool = thread.ThreadPoolExecutor(jax.local_device_count(), 'infeed')
     local_devices = jax.local_devices()
@@ -142,7 +146,7 @@ def train_epoch(train_function, state, train_it, steps_per_epoch):
     total = metrics.pop('total')
     metrics = jax.tree_map(lambda x: x / total, metrics)
     state = sync_batch_stats(state)
-    return state, metrics
+    return state, metrics, dropout_rng
 
 
 def eval_step(state, batch):
@@ -203,7 +207,7 @@ rng, init_rng = jax.random.split(rng)
 
 input_shape = (32, 32, 3)
 num_classes = 100
-model = wrn_28_10(num_classes=num_classes, dtype=jnp.bfloat16)
+model = wrn_28_10(dropout=0.3, num_classes=num_classes, dtype=jnp.bfloat16)
 variables = jax.jit(model.init, device=jax.devices(backend="cpu")[0])(init_rng, jnp.ones([1, *input_shape]))
 params, batch_stats = variables['params'], variables['batch_stats']
 
@@ -224,9 +228,11 @@ p_eval_step = jax.pmap(eval_step, axis_name='batch')
 train_it = get_iter(ds_train)
 test_it = get_iter(ds_test)
 
+dropout_rng = random.split(rng, jax.local_device_count())
+
 for epoch in range(epochs):
     print("Epoch %d/%d" % (epoch + 1, epochs))
-    state, metrics = train_epoch(train_function, state, train_it, steps_per_epoch)
+    state, metrics, dropout_rng = train_epoch(train_function, state, train_it, steps_per_epoch, dropout_rng)
     log_metrics('train', metrics)
 
     metrics = eval_epoch(p_eval_step, state, test_it, test_steps)
