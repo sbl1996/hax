@@ -54,7 +54,11 @@ def Conv2d(in_channels, out_channel, kernel_size, stride=1, padding='SAME', bias
     return Sequential(layers)
 
 
-def Norm(channels, dtype=jnp.float32):
+def NormAct(channels=None, dtype=jnp.float32):
+    return Sequential([Norm(channels, dtype=dtype), Act()])
+
+
+def Norm(channels=None, dtype=jnp.float32):
     return BatchNorm(momentum=0.9, epsilon=1e-5, dtype=dtype)
 
 

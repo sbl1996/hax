@@ -1,69 +1,71 @@
+from typing import Sequence
+from functools import partial
+
 import jax.numpy as jnp
 from flax import linen as nn
-from hax.models.layers import Act, Norm, Conv2d, Linear
+from hax.models.layers import NormAct, Conv2d, Linear, DType, ModuleDef
 
 
-class PreActDownBlock(nn.Module):
+class BasicBlock(nn.Module):
+    in_channels: int
     channels: int
     stride: int
     dropout: float
+    expansion: int = 4
+    dtype: DType = jnp.float32
 
     @nn.compact
     def __call__(self, x, training):
-        x = Norm()(x, training)
-        x = Act()(x)
-        residual = x
-        x = Conv2d(self.channels, 3, self.stride)(x)
-        x = Norm()(x, training)
-        x = Act()(x)
+        out_channels = self.channels * self.expansion
+
+        shortcut = x
+
+        x = NormAct(dtype=self.dtype)(x, training)
+
+        if self.in_channels != out_channels or self.stride == 2:
+            shortcut = Conv2d(self.in_channels, out_channels, 1, stride=self.stride, dtype=self.dtype)(x)
+
+        x = Conv2d(self.in_channels, out_channels, 3,
+                   norm='def', act='def', dtype=self.dtype)(x, training)
+
         if self.dropout:
             x = nn.Dropout(self.dropout)(x, training)
-        x = Conv2d(self.channels, 3)(x)
 
-        residual = Conv2d(self.channels, 1, self.stride)(residual)
-
-        return residual + x
-
-
-class PreActResBlock(nn.Module):
-    channels: int
-    dropout: float
-
-    @nn.compact
-    def __call__(self, x, training):
-        residual = x
-        x = Norm()(x, training)
-        x = Act()(x)
-        x = Conv2d(self.channels, 3)(x)
-
-        x = Norm()(x, training)
-        x = Act()(x)
-        x = Conv2d(self.channels, 3)(x)
-        if self.dropout:
-            x = nn.Dropout(self.dropout)(x, training)
-        return residual + x
+        x = Conv2d(out_channels, out_channels, 3)(x)
+        return shortcut + x
 
 
 class ResNet(nn.Module):
     depth: int
-    k: int
-    dropout: float = 0.0
+    block: ModuleDef
     num_classes: int = 10
-    stem_channels: int = 16
+    channels: Sequence[int] = (16, 16, 32, 64)
+    dtype: DType = jnp.float32
 
     @nn.compact
-    def __call__(self, x, training: bool = True):
-        num_blocks = (self.depth - 4) // 6
-        strides = [1, 2, 2]
-        channels = [16, 32, 64]
+    def __call__(self, x, training=False):
+        block = partial(self.block, dtype=self.dtype)
+        layers = [(self.depth - 4) // 6] * 3
+        stem_channels, *channels = self.channels
+        x = Conv2d(3, stem_channels, kernel_size=3, dtype=self.dtype)(x)
 
-        x = Conv2d(self.stem_channels, 3, 1)(x)
-        for s, c in zip(strides, channels):
-            x = PreActDownBlock(c * self.k, s, self.dropout)(x, training)
-            for j in range(1, num_blocks):
-                x = PreActResBlock(c * self.k, self.dropout)(x, training)
-        x = Norm()(x, training)
-        x = Act()(x)
+        c_in = stem_channels
+
+        strides = [1, 2, 2]
+        for i, (c, n, s) in enumerate(zip(channels, layers, strides)):
+            x = block(c_in, c, stride=s)(x, training=training)
+            c_in = c * self.block.expansion
+            for i in range(1, n):
+                x = block(c_in, c, stride=1)(x, training=training)
+
+        x = NormAct(dtype=self.dtype)(x, training)
         x = jnp.mean(x, axis=(1, 2))
-        x = Linear(self.num_classes)(x)
+        x = Linear(c_in, self.num_classes, dtype=self.dtype)(x)
         return x
+
+
+def wrn_28_10(**kwargs):
+    channels = [16, 16, 32, 64]
+    k = 10
+    channels = (channels[0],) + tuple(c * k for c in channels[1:])
+    return ResNet(depth=28, block=BasicBlock, channels=channels, **kwargs)

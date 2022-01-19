@@ -9,7 +9,7 @@ from hax.models.layers import DType, ModuleDef, Conv2d, ReLU, Linear, Act
 
 class Bottleneck(nn.Module):
     in_channels: int
-    channels: ModuleDef
+    channels: int
     stride: int
     expansion: int = 4
     dtype: DType = jnp.float32

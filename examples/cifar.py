@@ -23,6 +23,7 @@ from hanser.datasets.cifar import make_cifar100_dataset
 from hax.optim import sgd, cosine_lr
 from hax.nn.loss import cross_entropy
 from hax.models.cifar.resnet import resnet110
+from hax.models.cifar.preactresnet import wrn_28_10
 
 broadcast = jax_utils.replicate
 
@@ -167,8 +168,6 @@ def eval_epoch(eval_step, state, test_it, test_steps):
     return metrics
 
 
-# pmean only works inside pmap because it needs an axis name.
-# This function will average the inputs across all devices.
 cross_replica_mean = jax.pmap(lambda x: lax.pmean(x, 'x'), 'x')
 
 def sync_batch_stats(state):
@@ -204,7 +203,7 @@ rng, init_rng = jax.random.split(rng)
 
 input_shape = (32, 32, 3)
 num_classes = 100
-model = resnet110(num_classes=num_classes, dtype=jnp.bfloat16)
+model = wrn_28_10(num_classes=num_classes, dtype=jnp.bfloat16)
 variables = jax.jit(model.init, device=jax.devices(backend="cpu")[0])(init_rng, jnp.ones([1, *input_shape]))
 params, batch_stats = variables['params'], variables['batch_stats']
 
